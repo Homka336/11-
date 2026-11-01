@@ -7,67 +7,128 @@ from io import BytesIO
 
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = int(os.environ["CHAT_ID"])
-PDF_URL = "https://kirovskschool5.gosuslugi.ru/netcat_files/userfiles/raspisanie2026.pdf"
+PDF_URL = "https://kirovskschool5.gosuslugi.ru/"
+PDF_URL += "netcat_files/userfiles/raspisanie2026.pdf"
 MY_CLASS = os.environ.get("MY_CLASS", "11а")
 
-LAT_TO_CYR = {"a": "а", "b": "б", "v": "в", "g": "г", "d": "д",
-              "e": "е", "k": "к", "m": "м", "n": "н", "o": "о",
-              "p": "п", "c": "с", "t": "т", "y": "у", "x": "х"}
+LAT = {"a": "а", "b": "б", "v": "в",
+       "g": "г", "d": "д", "e": "е",
+       "k": "к", "m": "м", "n": "н",
+       "o": "о", "p": "п", "c": "с",
+       "t": "т", "y": "у", "x": "х"}
 
-def normalize_class(name: str) -> str:
-    """Приводит '11A' / '11 а' / '11-а' к виду '11а'"""
-    name = name.strip().lower().replace(" ", "").replace("-", "")
-    return "".join(LAT_TO_CYR.get(ch, ch) for ch in name)
 
-CLASS_RE = re.compile(r"^(\d{1,2})([а-яa-z])$", re.IGNORECASE)
+def normalize_class(name):
+    name = name.strip().lower()
+    name = name.replace(" ", "")
+    name = name.replace("-", "")
+    out = ""
+    for ch in name:
+        out += LAT.get(ch, ch)
+    return out
 
-def parse_schedule(pdf_url: str, target_class: str):
+
+CLASS_RE = re.compile(r"^(\d{1,2})([а-яa-z])$")
+
+
+def parse_schedule(pdf_url, target_class):
     target = normalize_class(target_class)
-    response = requests.get(pdf_url, timeout=30)
-    response.raise_for_status()
-    pdf = pymupdf.open(stream=BytesIO(response.content), filetype="pdf")
-
+    resp = requests.get(pdf_url, timeout=30)
+    resp.raise_for_status()
+    pdf = pymupdf.open(stream=BytesIO(resp.content),
+                       filetype="pdf")
     lessons = []
     found_class = False
 
     for page in pdf:
-        for table in page.find_tables().tables:
+        tables = page.find_tables().tables
+        for table in tables:
             df = table.to_pandas()
-            # соответствие колонка -> класс
             col_class = {}
             for col in df.columns:
-                if CLASS_RE.match(str(col).strip()):
-                    col_class[col] = normalize_class(str(col).strip())
-            target_col = next((c for c, v in col_class.items() if v == target), None)
+                c = str(col).strip()
+                if CLASS_RE.match(c):
+                    col_class[col] = normalize_class(c)
+            target_col = None
+            for c, v in col_class.items():
+                if v == target:
+                    target_col = c
             if target_col is not None:
                 found_class = True
 
             for _, row in df.iterrows():
-                vals = [str(v).strip() for v in row.values
-                        if pd.notna(v) and str(v).strip() not in ("", "nan")]
+                vals = []
+                for v in row.values:
+                    s = str(v).strip()
+                    if pd.notna(v) and s not in ("", "nan"):
+                        vals.append(s)
                 if not vals:
                     continue
                 if "№" in vals:
-                    # новая группа классов — обновляем соответствие
                     for col in df.columns:
-                        c = str(row[col]).strip() if pd.notna(row[col]) else ""
-                        if CLASS_RE.match(c):
+                        c = str(row[col]).strip()
+                        ok = pd.notna(row[col])
+                        if ok and CLASS_RE.match(c):
                             col_class[col] = normalize_class(c)
-                    target_col = next((c for c, v in col_class.items() if v == target), None)
+                    target_col = None
+                    for c, v in col_class.items():
+                        if v == target:
+                            target_col = c
                     if target_col is not None:
                         found_class = True
                     continue
-                if target_col is not None:
-                    cell = str(row[target_col]).strip() if pd.notna(row[target_col]) else ""
-                    if cell and cell != "nan":
-                        num = next((int(v) for v in vals if v.isdigit() and 1 <= int(v) <= 10), None)
-                        if num:
-                            lessons.append((num, cell))
+                if target_col is None:
+                    continue
+                cell = str(row[target_col]).strip()
+                if not cell or cell == "nan":
+                    continue
+                num = None
+                for v in vals:
+                    if v.isdigit() and 1 <= int(v) <= 10:
+                        num = int(v)
+                        break
+                if num is not None:
+                    lessons.append((num, cell))
 
     if not found_class:
-        return (f"❌ Класс '{target_class}' не найден.\n"
-                f"Проверьте секрет MY_CLASS (пример: 11а).")
+        return "❌ Class " + target_class + " not found."
     if not lessons:
-        return f"📋 У класса {target} уроков нет (выходной или каникулы)."
+        return "📭 Class " + target + " has no lessons."
 
-    lines = [f"📚 Расписание для класса
+    lines = []
+    head = "📚 Schedule for class " + target + ":"
+    lines.append(head)
+    lines.append("")
+    lessons.sort(key=lambda x: x[0])
+    for num, cell in lessons:
+        parts = []
+        for p in cell.split("\n"):
+            p = p.strip()
+            if p:
+                parts.append(p)
+        subject = parts[0]
+        teacher = ""
+        if len(parts) > 1:
+            teacher = ", ".join(parts[1:])
+        lines.append(str(num) + ". " + subject)
+        if teacher:
+            lines.append("👤 " + teacher)
+        lines.append("")
+    return "\n".join(lines)
+
+
+def send_message(text):
+    base = "https://api.telegram.org/bot"
+    url = base + BOT_TOKEN + "/sendMessage"
+    data = {"chat_id": CHAT_ID, "text": text}
+    r = requests.post(url, json=data)
+    print("Send status:", r.status_code)
+
+
+if __name__ == "__main__":
+    try:
+        text = parse_schedule(PDF_URL, MY_CLASS)
+    except Exception as e:
+        text = "❌ Error: " + str(e)
+    print(text)
+    send_message(text)
