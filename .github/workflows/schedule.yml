@@ -1,3 +1,30 @@
-name: Send schedule
-on: {schedule: [{cron: '0 13 * * *'}], workflow_dispatch: null}
-jobs: {send-schedule: {runs-on: ubuntu-latest, steps: [{name: Checkout, uses: actions/checkout@v3}, {name: Setup Python, uses: actions/setup-python@v4, with: {python-version: '3.11'}}, {name: Install libs, run: 'pip install pymupdf requests pandas'}, {name: Run bot, env: {BOT_TOKEN: '${{ secrets.BOT_TOKEN }}', CHAT_ID: '${{ secrets.CHAT_ID }}', MY_CLASS: '${{ secrets.MY_CLASS }}'}, run: 'python bot.py'}]}}
+name: Отправить расписание
+
+on:
+  schedule:
+    # Каждый день в 16:00 по Москве (13:00 по UTC)
+    - cron: '0 13 * * *'
+  workflow_dispatch:  # Можно запускать вручную для теста
+
+jobs:
+  send-schedule:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Скачать код
+        uses: actions/checkout@v3
+
+      - name: Установить Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+
+      - name: Установить библиотеки
+        run: |
+          pip install pymupdf requests pandas
+
+      - name: Запустить бота
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          MY_CLASS: ${{ secrets.MY_CLASS }}
+        run: python bot.py
