@@ -1,5 +1,4 @@
 name: Send schedule
-
 on:
   schedule:
     - cron: '0 13 * * *'
