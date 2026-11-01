@@ -1,28 +1,27 @@
-name: Отправить расписание
+name: Send schedule
 
 on:
   schedule:
-    # Каждый день в 16:00 по Москве (13:00 по UTC)
     - cron: '0 13 * * *'
-  workflow_dispatch:  # Можно запускать вручную для теста
+  workflow_dispatch:
 
 jobs:
   send-schedule:
     runs-on: ubuntu-latest
     steps:
-      - name: Скачать код
+      - name: Checkout
         uses: actions/checkout@v3
 
-      - name: Установить Python
+      - name: Setup Python
         uses: actions/setup-python@v4
         with:
           python-version: '3.11'
 
-      - name: Установить библиотеки
+      - name: Install libs
         run: |
           pip install pymupdf requests pandas
 
-      - name: Запустить бота
+      - name: Run bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
