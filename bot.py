@@ -1,109 +1,73 @@
-import pymupdf
-import requests
-from io import BytesIO
-import pandas as pd
 import os
+import re
+import requests
+import pandas as pd
+import pymupdf
+from io import BytesIO
 
-# Берём настройки из секретов GitHub
 BOT_TOKEN = os.environ["BOT_TOKEN"]
 CHAT_ID = int(os.environ["CHAT_ID"])
 PDF_URL = "https://kirovskschool5.gosuslugi.ru/netcat_files/userfiles/raspisanie2026.pdf"
-MY_CLASS = os.environ.get("MY_CLASS", "9б")
+MY_CLASS = os.environ.get("MY_CLASS", "11а")
 
-def parse_schedule(pdf_url: str, target_class: str) -> str | None:
-    """Скачивает PDF и парсит расписание для указанного класса."""
-    try:
-        response = requests.get(pdf_url, timeout=30)
-        if response.status_code != 200:
-            return f"❌ Ошибка загрузки PDF: {response.status_code}"
+LAT_TO_CYR = {"a": "а", "b": "б", "v": "в", "g": "г", "d": "д",
+              "e": "е", "k": "к", "m": "м", "n": "н", "o": "о",
+              "p": "п", "c": "с", "t": "т", "y": "у", "x": "х"}
 
-        pdf_document = pymupdf.open(stream=BytesIO(response.content), filetype="pdf")
+def normalize_class(name: str) -> str:
+    """Приводит '11A' / '11 а' / '11-а' к виду '11а'"""
+    name = name.strip().lower().replace(" ", "").replace("-", "")
+    return "".join(LAT_TO_CYR.get(ch, ch) for ch in name)
 
-        all_data = []
-        for page_num in range(pdf_document.page_count):
-            page = pdf_document[page_num]
-            tables = page.find_tables()
-            for table in tables.tables:
-                df = table.to_pandas()
-                all_data.append(df)
+CLASS_RE = re.compile(r"^(\d{1,2})([а-яa-z])$", re.IGNORECASE)
 
-        df_full = pd.concat(all_data, ignore_index=True)
+def parse_schedule(pdf_url: str, target_class: str):
+    target = normalize_class(target_class)
+    response = requests.get(pdf_url, timeout=30)
+    response.raise_for_status()
+    pdf = pymupdf.open(stream=BytesIO(response.content), filetype="pdf")
 
-        # Ищем нужный класс в таблице
-        class_schedule = {}
-        current_class = None
+    lessons = []
+    found_class = False
 
-        for idx, row in df_full.iterrows():
-            for col in df_full.columns:
-                cell = str(row[col])
-                if cell.strip() == target_class:
-                    current_class = col
-                    break
-            if current_class:
-                break
+    for page in pdf:
+        for table in page.find_tables().tables:
+            df = table.to_pandas()
+            # соответствие колонка -> класс
+            col_class = {}
+            for col in df.columns:
+                if CLASS_RE.match(str(col).strip()):
+                    col_class[col] = normalize_class(str(col).strip())
+            target_col = next((c for c, v in col_class.items() if v == target), None)
+            if target_col is not None:
+                found_class = True
 
-        if not current_class:
-            return f"❌ Класс '{target_class}' не найден в расписании."
+            for _, row in df.iterrows():
+                vals = [str(v).strip() for v in row.values
+                        if pd.notna(v) and str(v).strip() not in ("", "nan")]
+                if not vals:
+                    continue
+                if "№" in vals:
+                    # новая группа классов — обновляем соответствие
+                    for col in df.columns:
+                        c = str(row[col]).strip() if pd.notna(row[col]) else ""
+                        if CLASS_RE.match(c):
+                            col_class[col] = normalize_class(c)
+                    target_col = next((c for c, v in col_class.items() if v == target), None)
+                    if target_col is not None:
+                        found_class = True
+                    continue
+                if target_col is not None:
+                    cell = str(row[target_col]).strip() if pd.notna(row[target_col]) else ""
+                    if cell and cell != "nan":
+                        num = next((int(v) for v in vals if v.isdigit() and 1 <= int(v) <= 10), None)
+                        if num:
+                            lessons.append((num, cell))
 
-        # Собираем уроки
-        lessons = []
-        found_header = False
+    if not found_class:
+        return (f"❌ Класс '{target_class}' не найден.\n"
+                f"Проверьте секрет MY_CLASS (пример: 11а).")
+    if not lessons:
+        return f"📋 У класса {target} уроков нет (выходной или каникулы)."
 
-        for idx, row in df_full.iterrows():
-            row_values = [str(v).strip() for v in row.values if pd.notna(v)]
-            if target_class in row_values and "№" in row_values:
-                found_header = True
-                continue
-
-            if found_header:
-                first_col = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else ""
-                target_col_value = str(row[current_class]).strip() if pd.notna(row[current_class]) else ""
-
-                if first_col.isdigit():
-                    lesson_num = int(first_col)
-                    if target_col_value and target_col_value not in ["nan", "None", ""]:
-                        lessons.append((lesson_num, target_col_value))
-
-                # Если начался новый блок классов — выходим
-                if "№" in str(row.iloc[0]) if pd.notna(row.iloc[0]) else "":
-                    break
-
-        if not lessons:
-            return f"📋 Расписание для {target_class} пустое."
-
-        # Формируем сообщение
-        result = f"📚 Расписание для класса *{target_class}* на завтра:\n\n"
-        for num, lesson in sorted(lessons):
-            parts = lesson.split("\\n")
-            subject = parts[0]
-            teacher = parts[1] if len(parts) >= 2 else ""
-            result += f"*{num}.* {subject}"
-            if teacher:
-                result += f"\n👤 _{teacher}_"
-            result += "\n\n"
-
-        return result
-
-    except Exception as e:
-        return f"❌ Ошибка при парсинге: {str(e)}"
-
-
-def send_message(text):
-    """Отправляет сообщение в Telegram"""
-    url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    data = {
-        "chat_id": CHAT_ID,
-        "text": text,
-        "parse_mode": "Markdown"
-    }
-    r = requests.post(url, json=data)
-    if r.status_code == 200:
-        print("✅ Сообщение отправлено!")
-    else:
-        print(f"❌ Ошибка отправки: {r.text}")
-
-
-if __name__ == "__main__":
-    schedule_text = parse_schedule(PDF_URL, MY_CLASS)
-    print("Расписание:", schedule_text)
-    send_message(schedule_text)
+    lines = [f"📚 Расписание для класса
