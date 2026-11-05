@@ -2,9 +2,8 @@ name: Отправить расписание
 
 on:
   schedule:
-    # Каждый день в 16:00 по Москве (13:00 по UTC)
     - cron: '5 13 * * *'
-  workflow_dispatch:  # Можно запускать вручную для теста
+  workflow_dispatch:
 
 jobs:
   send-schedule:
