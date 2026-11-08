@@ -32,11 +32,7 @@ def norm(s):
     return out
 
 
-def header_rows(page):
-    toks = []
-    for w in page.get_text("words"):
-        if CLS.match(norm(w[4])):
-            toks.append(w)
+def group_rows(toks):
     rows = []
     for t in sorted(toks, key=lambda z: z[1]):
         done = False
@@ -47,13 +43,10 @@ def header_rows(page):
                 break
         if not done:
             rows.append([t])
-    out = []
     for row in rows:
         row.sort(key=lambda z: z[0])
-        if len(row) >= 2:
-            out.append(row)
-    out.sort(key=lambda z: z[0][1])
-    return out
+    rows.sort(key=lambda z: z[0][1])
+    return rows
 
 
 def lines_of(words):
@@ -88,6 +81,26 @@ def split_cell(cell):
     return subj, teach
 
 
+def send_message(text):
+    base = "https://api.telegram.org/bot"
+    url = base + BOT_TOKEN + "/sendMessage"
+    data = {"chat_id": CHAT_ID, "text": text}
+    r = requests.post(url, json=data)
+    print("Send status:", r.status_code)
+    print(r.text)
+    if r.status_code != 200:
+        raise SystemExit("Message not sent!")
+
+
+def send_photo(png, caption):
+    base = "https://api.telegram.org/bot"
+    url = base + BOT_TOKEN + "/sendPhoto"
+    data = {"chat_id": CHAT_ID, "caption": caption}
+    files = {"photo": ("page.png", png)}
+    r = requests.post(url, data=data, files=files)
+    print("Photo status:", r.status_code)
+
+
 def parse_schedule(pdf_url, target_class):
     target = norm(target_class)
     resp = requests.get(pdf_url, timeout=30)
@@ -96,18 +109,25 @@ def parse_schedule(pdf_url, target_class):
                        filetype="pdf")
     blocks = []
     found = []
+    dbg = []
 
     for page in pdf:
-        rows = header_rows(page)
-        for r in rows:
-            for t in r:
-                found.append(norm(t[4]))
+        words = page.get_text("words")
+        if not words:
+            dbg.append("p" + str(page.number + 1) + ":scan")
+            continue
+        toks = [w for w in words
+                if CLS.match(norm(w[4]))]
+        for t in toks:
+            found.append(norm(t[4]))
+        rows = group_rows(toks)
         for i, row in enumerate(rows):
             names = [norm(t[4]) for t in row]
             ks = [idx for idx, n in enumerate(names)
                   if n == target]
             if not ks:
                 continue
+            dbg.append("p" + str(page.number + 1))
             for k in ks:
                 tok = row[k]
                 left = tok[0] - 40
@@ -124,91 +144,11 @@ def parse_schedule(pdf_url, target_class):
                 colw = []
                 nums = []
                 x_first = row[0][0] - 2
-                for w in page.get_text("words"):
+                for w in words:
                     y = w[1]
                     if not (top < y < bot):
                         continue
                     cx = (w[0] + w[2]) / 2
                     t = w[4].strip()
                     if t.isdigit() and 1 <= int(t) <= 10:
-                        if cx < x_first:
-                            nums.append(w)
-                            continue
-                    if left <= cx <= right:
-                        colw.append(w)
-                block = []
-                if not nums and colw:
-                    colw.sort(key=lambda z: z[1])
-                    cells = []
-                    cur = [colw[0]]
-                    for w in colw[1:]:
-                        if w[1] - cur[-1][3] > 8:
-                            cells.append(cur)
-                            cur = [w]
-                        else:
-                            cur.append(w)
-                    cells.append(cur)
-                    for n, c in enumerate(cells, 1):
-                        s, t2 = split_cell(c)
-                        block.append((n, s, t2))
-                nums.sort(key=lambda z: z[1])
-                for j, nm in enumerate(nums):
-                    y0 = nm[1] - 4
-                    if j + 1 < len(nums):
-                        y1 = nums[j + 1][1] - 4
-                    else:
-                        y1 = bot
-                    cell = [w for w in colw
-                            if y0 <= w[1] < y1]
-                    if not cell:
-                        continue
-                    s, t2 = split_cell(cell)
-                    block.append((int(nm[4]), s, t2))
-                blocks.append(block)
-
-    if not blocks:
-        uniq = sorted(set(found))
-        msg = "❌ Class " + target_class
-        msg += " not found or has no lessons."
-        msg += "\nClasses seen in PDF: "
-        msg += ", ".join(uniq)
-        return msg
-
-    if PICK == "first":
-        lessons = blocks[0]
-    else:
-        lessons = blocks[-1]
-
-    if not lessons:
-        return "📭 Class " + target + " has no lessons."
-
-    lessons.sort(key=lambda z: z[0])
-    out = []
-    out.append("📚 Schedule for " + target + ":")
-    out.append("")
-    for num, subj, teach in lessons:
-        out.append(str(num) + ". " + " ".join(subj))
-        if teach:
-            out.append("👤 " + " ".join(teach))
-        out.append("")
-    return "\n".join(out)
-
-
-def send_message(text):
-    base = "https://api.telegram.org/bot"
-    url = base + BOT_TOKEN + "/sendMessage"
-    data = {"chat_id": CHAT_ID, "text": text}
-    r = requests.post(url, json=data)
-    print("Send status:", r.status_code)
-    print(r.text)
-    if r.status_code != 200:
-        raise SystemExit("Message not sent!")
-
-
-if __name__ == "__main__":
-    try:
-        text = parse_schedule(PDF_URL, MY_CLASS)
-    except Exception as e:
-        text = "❌ Error: " + str(e)
-    print(text)
-    send_message(text)
+                        if cx < x
