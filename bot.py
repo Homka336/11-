@@ -133,6 +133,7 @@ def parse_schedule(pdf_url, target_class):
                         continue
                 if left <= cx <= right:
                     colw.append(w)
+            block = []
             if not nums and colw:
                 colw.sort(key=lambda z: z[1])
                 cells = []
@@ -146,7 +147,7 @@ def parse_schedule(pdf_url, target_class):
                 cells.append(cur)
                 for n, c in enumerate(cells, 1):
                     s, t2 = split_cell(c)
-                    lessons.append((n, s, t2))
+                    block.append((n, s, t2))
             nums.sort(key=lambda z: z[1])
             for j, nm in enumerate(nums):
                 y0 = nm[1] - 4
@@ -159,7 +160,8 @@ def parse_schedule(pdf_url, target_class):
                 if not cell:
                     continue
                 s, t2 = split_cell(cell)
-                lessons.append((int(nm[4]), s, t2))
+                block.append((int(nm[4]), s, t2))
+            lessons = block
 
     if not lessons:
         uniq = sorted(set(found))
