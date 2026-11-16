@@ -2,7 +2,7 @@ name: Отправить расписание
 
 on:
   schedule:
-    - cron: '30 13 * * *'      # 16:30 МСК (13:30 UTC)
+    - cron: '0 12 * * *'      # 16:30 МСК (13:30 UTC)
   workflow_dispatch:
 
 permissions:
