@@ -2,28 +2,39 @@ name: Отправить расписание
 
 on:
   schedule:
-    - cron: '5 13 * * *'
+    - cron: '30 13 * * *'      # 16:30 МСК (13:30 UTC)
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: schedule
+  cancel-in-progress: false
 
 jobs:
   send-schedule:
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
-      - name: Скачать код
-        uses: actions/checkout@v3
+      - uses: actions/checkout@v5
 
-      - name: Установить Python
-        uses: actions/setup-python@v4
+      - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
+          cache: 'pip'
+
+      - name: Установить Tesseract (OCR)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-rus
 
       - name: Установить библиотеки
-        run: |
-          pip install pymupdf requests pandas
+        run: pip install -r requirements.txt
 
       - name: Запустить бота
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-          MY_CLASS: ${{ secrets.MY_CLASS }}
+          MY_CLASS: ${{ vars.MY_CLASS || secrets.MY_CLASS || '11а' }}
         run: python bot.py
