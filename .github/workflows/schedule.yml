@@ -2,39 +2,67 @@ name: Отправить расписание
 
 on:
   schedule:
-    - cron: '0 12 * * *'      # 16:30 МСК (13:30 UTC)
+    # каждые 15 минут с 15:00 до 19:45 МСК (12:00-16:45 UTC) — 20 попыток за день
+    - cron: '*/15 12-16 * * *'
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write          # нужно, чтобы отметить отправку
 
 concurrency:
   group: schedule
   cancel-in-progress: false
 
 jobs:
-  send-schedule:
+  send:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
 
-      - uses: actions/setup-python@v6
+      - name: Надо ли отправлять?
+        id: gate
+        run: |
+          D=$(TZ=Europe/Moscow date +%F)
+          H=$(TZ=Europe/Moscow date +%-H)
+          LAST=$(cat .last-sent 2>/dev/null || echo "")
+          echo "Сейчас по МСК: $(TZ=Europe/Moscow date '+%d.%m %H:%M'), последняя отправка: ${LAST:-никогда}"
+          GO=no
+          if [ "$H" -ge 15 ] && [ "$H" -le 21 ] && [ "$LAST" != "$D" ]; then GO=yes; fi
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then GO=yes; fi
+          echo "go=$GO" >> "$GITHUB_OUTPUT"
+          echo "day=$D" >> "$GITHUB_OUTPUT"
+
+      - name: Установить Python
+        if: steps.gate.outputs.go == 'yes'
+        uses: actions/setup-python@v6
         with:
           python-version: '3.11'
-          cache: 'pip'
 
       - name: Установить Tesseract (OCR)
+        if: steps.gate.outputs.go == 'yes'
         run: |
           sudo apt-get update
           sudo apt-get install -y tesseract-ocr tesseract-ocr-rus
 
       - name: Установить библиотеки
+        if: steps.gate.outputs.go == 'yes'
         run: pip install -r requirements.txt
 
-      - name: Запустить бота
+      - name: Отправить расписание
+        if: steps.gate.outputs.go == 'yes'
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           MY_CLASS: ${{ vars.MY_CLASS || secrets.MY_CLASS || '11а' }}
         run: python bot.py
+
+      - name: Отметить, что отправлено
+        if: steps.gate.outputs.go == 'yes' && github.event_name != 'workflow_dispatch'
+        run: |
+          echo "${{ steps.gate.outputs.day }}" > .last-sent
+          git config user.name  "schedule-bot"
+          git config user.email "actions@github.com"
+          git add .last-sent
+          git commit -m "расписание отправлено ${{ steps.gate.outputs.day }}"
+          git push
