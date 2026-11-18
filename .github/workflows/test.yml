@@ -4,15 +4,15 @@ on:
   workflow_dispatch:
     inputs:
       klass:
-        description: 'Класс (оставь пустым = как в бою, обычно 11а)'
+        description: 'Класс (пусто = как в бою)'
         required: false
         default: ''
 
 permissions:
-  contents: read           # читать репозиторий, писать не может
+  contents: read
 
 concurrency:
-  group: schedule-test     # отдельная очередь, боевой workflow не трогает
+  group: schedule-test
   cancel-in-progress: false
 
 jobs:
@@ -21,6 +21,25 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
+
+      - name: Проверка связи с Telegram
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          ME=$(curl -s "https://api.telegram.org/bot$BOT_TOKEN/getMe")
+          R=$(curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" \
+                -d chat_id="$CHAT_ID" \
+                -d text="🔧 Проверка связи: бот жив, начинаю разбор расписания")
+          {
+            echo "### Кто отправляет (getMe)"
+            echo '```json'; echo "$ME"; echo '```'
+            echo "### Кому ушло (sendMessage)"
+            echo '```json'; echo "$R"; echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          echo "$ME"
+          echo "$R"
+          echo "$R" | grep -q '"ok":true' || { echo "❌ Telegram не принял сообщение"; exit 1; }
 
       - uses: actions/setup-python@v6
         with:
