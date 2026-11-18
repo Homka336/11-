@@ -1,51 +1,27 @@
-name: 🧪 Тест расписания
+name: 📤 Отправить сейчас
 
 on:
-  workflow_dispatch:
-    inputs:
-      klass:
-        description: 'Класс (пусто = как в бою)'
-        required: false
-        default: ''
+  workflow_dispatch:          # только по кнопке, никакого расписания
 
 permissions:
-  contents: read
+  contents: read              # писать в репозиторий запрещено
 
 concurrency:
-  group: schedule-test
+  group: manual-send          # своя очередь, боевой workflow не задевает
   cancel-in-progress: false
 
 jobs:
-  test:
+  send-now:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
 
-      - name: Проверка связи с Telegram
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          CHAT_ID: ${{ secrets.CHAT_ID }}
-        run: |
-          ME=$(curl -s "https://api.telegram.org/bot$BOT_TOKEN/getMe")
-          R=$(curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" \
-                -d chat_id="$CHAT_ID" \
-                -d text="🔧 Проверка связи: бот жив, начинаю разбор расписания")
-          {
-            echo "### Кто отправляет (getMe)"
-            echo '```json'; echo "$ME"; echo '```'
-            echo "### Кому ушло (sendMessage)"
-            echo '```json'; echo "$R"; echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
-          echo "$ME"
-          echo "$R"
-          echo "$R" | grep -q '"ok":true' || { echo "❌ Telegram не принял сообщение"; exit 1; }
-
       - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
 
-      - name: Установить Tesseract (OCR)
+      - name: Установить Tesseract
         run: |
           sudo apt-get update
           sudo apt-get install -y tesseract-ocr tesseract-ocr-rus
@@ -53,9 +29,9 @@ jobs:
       - name: Установить библиотеки
         run: pip install -r requirements.txt
 
-      - name: Отправить расписание (тест)
+      - name: Отправить расписание сейчас
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
-          MY_CLASS: ${{ inputs.klass || vars.MY_CLASS || secrets.MY_CLASS || '11а' }}
+          MY_CLASS: ${{ vars.MY_CLASS || secrets.MY_CLASS || '11а' }}
         run: python bot.py
