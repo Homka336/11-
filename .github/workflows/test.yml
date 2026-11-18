@@ -1,13 +1,13 @@
 name: 📤 Отправить сейчас
 
 on:
-  workflow_dispatch:          # только по кнопке, никакого расписания
+  workflow_dispatch:
 
 permissions:
-  contents: read              # писать в репозиторий запрещено
+  contents: read
 
 concurrency:
-  group: manual-send          # своя очередь, боевой workflow не задевает
+  group: manual-send
   cancel-in-progress: false
 
 jobs:
@@ -16,6 +16,15 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
+
+      - name: Пинг — кнопка сработала
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" \
+            --data-urlencode "chat_id=$CHAT_ID" \
+            --data-urlencode "text=🚀 Кнопка нажата, разбираю расписание…"
 
       - uses: actions/setup-python@v6
         with:
@@ -29,9 +38,24 @@ jobs:
       - name: Установить библиотеки
         run: pip install -r requirements.txt
 
-      - name: Отправить расписание сейчас
+      - name: Отправить расписание
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           MY_CLASS: ${{ vars.MY_CLASS || secrets.MY_CLASS || '11а' }}
-        run: python bot.py
+        run: |
+          set -o pipefail
+          python bot.py 2>&1 | tee bot.log
+
+      - name: Если упало — прислать причину
+        if: failure()
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+        run: |
+          TAIL=$(tail -c 600 bot.log 2>/dev/null | sed "s/$BOT_TOKEN/***/g")
+          [ -z "$TAIL" ] && TAIL="упало до запуска бота (установка зависимостей или сам файл bot.py)"
+          MSG=$(printf '❌ Не получилось:\n%s\n\n%s' "$TAIL" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID")
+          curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" \
+            --data-urlencode "chat_id=$CHAT_ID" \
+            --data-urlencode "text=$MSG"
