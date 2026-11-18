@@ -1,0 +1,42 @@
+name: 🧪 Тест расписания
+
+on:
+  workflow_dispatch:
+    inputs:
+      klass:
+        description: 'Класс (оставь пустым = как в бою, обычно 11а)'
+        required: false
+        default: ''
+
+permissions:
+  contents: read           # читать репозиторий, писать не может
+
+concurrency:
+  group: schedule-test     # отдельная очередь, боевой workflow не трогает
+  cancel-in-progress: false
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Установить Tesseract (OCR)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr tesseract-ocr-rus
+
+      - name: Установить библиотеки
+        run: pip install -r requirements.txt
+
+      - name: Отправить расписание (тест)
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          CHAT_ID: ${{ secrets.CHAT_ID }}
+          MY_CLASS: ${{ inputs.klass || vars.MY_CLASS || secrets.MY_CLASS || '11а' }}
+        run: python bot.py
