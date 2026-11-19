@@ -17,18 +17,54 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Пинг — кнопка сработала
+      - name: Проверка секретов и адреса доставки
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
-          curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" \
-            --data-urlencode "chat_id=$CHAT_ID" \
-            --data-urlencode "text=🚀 Кнопка нажата, разбираю расписание…"
+          python3 - <<'PY'
+          import os, sys, json, urllib.request, urllib.parse, urllib.error
+          token = (os.environ.get("BOT_TOKEN") or "").strip()
+          chat  = (os.environ.get("CHAT_ID") or "").strip()
+          if not token:
+              sys.exit("::error::Секрет BOT_TOKEN пуст. Settings -> Secrets and variables -> Actions -> Secrets.")
+          if not chat:
+              sys.exit("::error::Секрет CHAT_ID пуст. Settings -> Secrets and variables -> Actions -> Secrets.")
+          print(f"BOT_TOKEN: {len(token)} символов | CHAT_ID: ***{chat[-3:]}")
+
+          def call(method, **params):
+              data = urllib.parse.urlencode(params).encode()
+              req = urllib.request.Request(f"https://api.telegram.org/bot{token}/{method}", data=data)
+              try:
+                  with urllib.request.urlopen(req, timeout=30) as r:
+                      return json.load(r)
+              except urllib.error.HTTPError as e:
+                  return json.load(e)
+              except Exception as e:
+                  return {"ok": False, "description": str(e)}
+
+          me = call("getMe")
+          if not me.get("ok"):
+              sys.exit(f"::error::BOT_TOKEN неверный: {me.get('description')}")
+          print("Бот:", me["result"].get("username"))
+
+          ch = call("getChat", chat_id=chat)
+          if not ch.get("ok"):
+              sys.exit(f"::error::CHAT_ID не подходит: {ch.get('description')}. "
+                       "Если это личный чат - открой бота и нажми START (Запустить).")
+          c = ch["result"]
+          print("Чат:", c.get("title") or c.get("username") or c.get("first_name"), "| тип:", c.get("type"))
+
+          ping = call("sendMessage", chat_id=chat, text="🚀 Кнопка нажата, разбираю расписание…")
+          if not ping.get("ok"):
+              sys.exit(f"::error::Telegram не принял сообщение: {ping.get('description')}")
+          print("Пинг доставлен, message_id:", ping["result"]["message_id"])
+          PY
 
       - uses: actions/setup-python@v6
         with:
           python-version: '3.11'
+          cache: 'pip'
 
       - name: Установить Tesseract
         run: |
@@ -43,6 +79,7 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           MY_CLASS: ${{ vars.MY_CLASS || secrets.MY_CLASS || '11а' }}
+          PDF_URL: ${{ vars.PDF_URL }}
         run: |
           set -o pipefail
           python bot.py 2>&1 | tee bot.log
@@ -53,9 +90,28 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
         run: |
-          TAIL=$(tail -c 600 bot.log 2>/dev/null | sed "s/$BOT_TOKEN/***/g")
-          [ -z "$TAIL" ] && TAIL="упало до запуска бота (установка зависимостей или сам файл bot.py)"
-          MSG=$(printf '❌ Не получилось:\n%s\n\n%s' "$TAIL" "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID")
-          curl -s -X POST "https://api.telegram.org/bot$BOT_TOKEN/sendMessage" \
-            --data-urlencode "chat_id=$CHAT_ID" \
-            --data-urlencode "text=$MSG"
+          python3 - <<'PY'
+          import os, json, urllib.request, urllib.parse
+          token = (os.environ.get("BOT_TOKEN") or "").strip()
+          chat  = (os.environ.get("CHAT_ID") or "").strip()
+          try:
+              tail = open("bot.log", encoding="utf-8", errors="replace").read()[-700:]
+          except OSError:
+              tail = "упало до запуска бота: секреты, зависимости или сам bot.py"
+          if token:
+              tail = tail.replace(token, "***")
+          link = (f"{os.environ['GITHUB_SERVER_URL']}/{os.environ['GITHUB_REPOSITORY']}"
+                  f"/actions/runs/{os.environ['GITHUB_RUN_ID']}")
+          print(tail)
+          print(link)
+          if not token or not chat:
+              raise SystemExit("Секреты пустые - в Telegram отправить нельзя, читай лог выше")
+          text = f"❌ Не получилось:\n{tail}\n\n{link}"
+          data = urllib.parse.urlencode({"chat_id": chat, "text": text}).encode()
+          req = urllib.request.Request(f"https://api.telegram.org/bot{token}/sendMessage", data=data)
+          try:
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  print("отчёт отправлен:", json.load(r).get("ok"))
+          except Exception as e:
+              print("отчёт не отправился:", e)
+          PY
