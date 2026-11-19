@@ -2,12 +2,18 @@ name: Отправить расписание
 
 on:
   schedule:
-    # 20 попыток: каждые 15 минут с 15:00 до 19:45 МСК (12:00-16:45 UTC)
-    - cron: '*/15 12-16 * * *'
+    # Запасной триггер. GitHub задерживает cron на 3–10 часов,
+    # поэтому стартуем рано (с 12:00 МСК) — опоздавший запуск попадёт в вечер.
+    - cron: '*/15 9-17 * * *'
   workflow_dispatch:
+    inputs:
+      force:
+        description: 'Отправить принудительно (игнорировать окно и .last-sent)'
+        type: boolean
+        default: false
 
 permissions:
-  contents: write          # нужно, чтобы отметить отправку
+  contents: write
 
 concurrency:
   group: schedule
@@ -19,17 +25,21 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Надо ли отправлять?
         id: gate
+        env:
+          FORCE: ${{ github.event.inputs.force }}
         run: |
           D=$(TZ=Europe/Moscow date +%F)
           H=$(TZ=Europe/Moscow date +%-H)
           LAST=$(cat .last-sent 2>/dev/null || echo "")
           echo "Сейчас по МСК: $(TZ=Europe/Moscow date '+%d.%m %H:%M'), последняя отправка: ${LAST:-никогда}"
           GO=no
-          if [ "$H" -ge 15 ] && [ "$H" -le 21 ] && [ "$LAST" != "$D" ]; then GO=yes; fi
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then GO=yes; fi
+          if [ "$H" -ge 15 ] && [ "$H" -le 23 ] && [ "$LAST" != "$D" ]; then GO=yes; fi
+          if [ "$FORCE" = "true" ]; then GO=yes; fi
           echo "go=$GO" >> "$GITHUB_OUTPUT"
           echo "day=$D" >> "$GITHUB_OUTPUT"
 
@@ -38,6 +48,7 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.11'
+          cache: 'pip'
 
       - name: Установить Tesseract (OCR)
         if: steps.gate.outputs.go == 'yes'
@@ -55,14 +66,16 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           CHAT_ID: ${{ secrets.CHAT_ID }}
           MY_CLASS: ${{ vars.MY_CLASS || secrets.MY_CLASS || '11а' }}
+          PDF_URL: ${{ vars.PDF_URL }}
         run: python bot.py
 
       - name: Отметить, что отправлено
-        if: steps.gate.outputs.go == 'yes' && github.event_name != 'workflow_dispatch'
+        if: steps.gate.outputs.go == 'yes'
         run: |
           echo "${{ steps.gate.outputs.day }}" > .last-sent
           git config user.name  "schedule-bot"
           git config user.email "actions@github.com"
           git add .last-sent
           git commit -m "расписание отправлено ${{ steps.gate.outputs.day }}"
+          git pull --rebase origin main
           git push
